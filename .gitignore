@@ -1,2 +1,5 @@
 # MacOS specific:
 .DS_Store
+
+# Luacov:
+luacov.*
