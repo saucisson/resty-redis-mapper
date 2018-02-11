@@ -1,0 +1,13 @@
+version: "2"
+services:
+  redis:
+    image: redis:alpine
+  resty-redis-mapper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - .:/tmp/sources
