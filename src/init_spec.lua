@@ -1,15 +1,22 @@
 -- luacheck: new globals ngx
--- Add a path required for cjson:
+
+-- Add path for openresty modules:
 package.path  = "/usr/local/openresty/lualib/?.lua;" .. package.path
 package.cpath = "/usr/local/openresty/lualib/?.so;"  .. package.cpath
 
 describe ("resty-redis-mapper", function ()
 
+  local Redis, redis
+
   before_each (function ()
-    local Redis = require "resty.redis"
-    local redis = Redis:new ()
+    Redis = require "resty.redis"
+    redis = Redis:new ()
     assert (redis:connect ("redis", 6379))
     redis:flushall ()
+  end)
+
+  after_each (function ()
+    redis:close ()
   end)
 
   it ("can be required", function ()
@@ -102,6 +109,8 @@ describe ("resty-redis-mapper", function ()
   end)
 
   it ("can commit", function ()
+    assert.are.equal (redis:dbsize (), 0)
+    --
     local Module = require "resty-redis-mapper"
     local module = Module {
       host  = "redis",
@@ -111,9 +120,6 @@ describe ("resty-redis-mapper", function ()
     assert.has.no.errors (function ()
       module:commit ()
     end)
-    local Redis = require "resty.redis"
-    local redis = Redis:new ()
-    assert (redis:connect ("redis", 6379))
     assert.are.equal (redis:dbsize (), 2)
   end)
 

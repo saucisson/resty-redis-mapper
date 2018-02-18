@@ -4,5 +4,6 @@ return {
     coverage  = false,
     lazy      = true,
     recursive = true,
+    output    = "gtest",
   },
 }
