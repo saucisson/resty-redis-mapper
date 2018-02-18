@@ -17,12 +17,13 @@ description = {
 dependencies = {
   "lua >= 5.1",
   "hashids",
-  "lua-cjson",
+  -- "lua-cjson",
+  "lua-resty-busted",
 }
 
 build = {
   type    = "builtin",
   modules = {
-    ["c3"] = "src/init.lua",
+    ["resty-redis-mapper"] = "src/init.lua",
   },
 }

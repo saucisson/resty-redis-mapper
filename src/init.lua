@@ -24,8 +24,7 @@ local function empty ()
   return result
 end
 
-local M    = setmetatable ({}, empty ())
-local Data = setmetatable ({}, empty ())
+local M = setmetatable ({}, empty ())
 
 -- This whole module uses the proxy pattern to hide data.
 -- All objects returned to the caller are proxies,
@@ -249,9 +248,10 @@ end
 -- but forbids overwriting the __index, __newindex and __call metamethods,
 -- because they need to be implemented by this library.
 local function proxy_of_type (type)
-  local mt = {}
-  mt.__call = function (...)
-    return type (...)
+  local mt    = {}
+  local proxy = setmetatable ({}, mt)
+  mt.__call = function (_, ...)
+    return getmetatable (type).__call (proxy, ...)
   end
   mt.__tostring = function (_)
     return tostring (type)
@@ -265,7 +265,7 @@ local function proxy_of_type (type)
         and key ~= "__call")
     type [key] = value
   end
-  return setmetatable ({}, mt)
+  return proxy
 end
 
 -- The encoded object contains the following fields:
@@ -290,18 +290,24 @@ function M.type (module, name)
   local m = hidden [module]
   m.types [name] = proxy
   -- Define metamethods:
-  type.__metatable = proxy
-  type.__create = function (instance, contents)
+  proxy.__create = function (instance, contents)
     for key, value in pairs (contents) do
       instance [key] = value
     end
   end
-  type.__delete = function (instance)
+  proxy.__delete = function (instance)
     local _ = instance
   end
-  type.__load = function (x)
+  proxy.__load = function (x)
     assert (tostring (type) == x.__type)
-    return setmetatable (x, type)
+    return setmetatable (x, proxy)
+  end
+  proxy.__tostring = function (instance)
+    return instance.__identifier
+        .. " : "
+        .. instance.__type
+        .. " = "
+        .. Json.encode (instance.__contents)
   end
   type.__index = function (instance, key)
     -- If the key refers to a method, return it directly:
@@ -341,7 +347,7 @@ function M.type (module, name)
       __type       = instance.__type,
       __contents   = instance.__contents,
       __current    = current,
-    }, type)
+    }, proxy)
     unique [current] = result
     return result
   end

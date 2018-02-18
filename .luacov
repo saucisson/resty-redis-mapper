@@ -1,8 +1,0 @@
-return {
-	statsfile   = "luacov.stats.out",
-	reportfile  = "luacov.report.out",
-	deletestats = true,
-	modules     = {
-    ["resty-redis-mapper"] = "src/init.lua",
-  },
-}

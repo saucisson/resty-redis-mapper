@@ -1,7 +1,7 @@
 return {
   _all = {
     verbose   = true,
-    coverage  = true,
+    coverage  = false,
     lazy      = true,
     recursive = true,
   },
