@@ -17,7 +17,6 @@ description = {
 dependencies = {
   "lua >= 5.1",
   "hashids",
-  -- "lua-cjson",
   "lua-resty-busted",
 }
 
