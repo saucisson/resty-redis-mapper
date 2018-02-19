@@ -46,39 +46,6 @@ describe ("resty-redis-mapper", function ()
       end)
     end)
 
-    it ("cannot update __index", function ()
-      local Module = require "resty-redis-mapper"
-      local module = Module {
-        host  = "redis",
-      }
-      local Dog = module:type "dog"
-      assert.has.errors (function ()
-        Dog.__index = function () end
-      end)
-    end)
-
-    it ("cannot update __newindex", function ()
-      local Module = require "resty-redis-mapper"
-      local module = Module {
-        host  = "redis",
-      }
-      local Dog = module:type "dog"
-      assert.has.errors (function ()
-        Dog.__newindex = function () end
-      end)
-    end)
-
-    it ("cannot update __call", function ()
-      local Module = require "resty-redis-mapper"
-      local module = Module {
-        host  = "redis",
-      }
-      local Dog = module:type "dog"
-      assert.has.errors (function ()
-        Dog.__call = function () end
-      end)
-    end)
-
   end)
 
   describe ("objects", function ()
@@ -106,11 +73,51 @@ describe ("resty-redis-mapper", function ()
       end)
     end)
 
+    it ("handle equality before commit", function ()
+      local Module = require "resty-redis-mapper"
+      local module = Module {
+        host  = "redis",
+      }
+      local Dog = module:type "dog"
+      local dog = Dog {}
+      local o1  = module [dog]
+      local o2  = module [dog]
+      assert.are.same (dog, o1)
+      assert.are.same (dog, o2)
+    end)
+
+    it ("can be initialized and updated", function ()
+      local Module = require "resty-redis-mapper"
+      local id
+      do
+        local module = Module {
+          host  = "redis",
+        }
+        local Dog = module:type "dog"
+        local dog = Dog {
+          sub = {
+            name = "Medor",
+          },
+        }
+        assert.are.equal (dog.sub.name, "Medor")
+        id = module:identifier (dog)
+        module:commit ()
+      end
+      do
+        local module = Module {
+          host  = "redis",
+        }
+        local _   = module:type "dog"
+        local dog = module [id]
+        print (dog.sub.name)
+        assert.are.equal (dog.sub.name, "Medor")
+      end
+    end)
+
   end)
 
   it ("can commit", function ()
     assert.are.equal (redis:dbsize (), 0)
-    --
     local Module = require "resty-redis-mapper"
     local module = Module {
       host  = "redis",
