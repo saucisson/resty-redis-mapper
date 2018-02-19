@@ -10,7 +10,5 @@ services:
       dockerfile: Dockerfile
     entrypoint:
       - /tmp/sources/update.sh
-    ports:
-      - "8080:80"
     volumes:
       - .:/tmp/sources
