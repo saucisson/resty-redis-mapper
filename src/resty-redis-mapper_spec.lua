@@ -42,7 +42,7 @@ describe ("resty-redis-mapper", function ()
         host  = "redis",
       }
       assert.has.no.errors (function ()
-        local _ = module:type "dog"
+        local _ = module:type "type"
       end)
     end)
 
@@ -55,9 +55,9 @@ describe ("resty-redis-mapper", function ()
       local module = Module {
         host  = "redis",
       }
-      local Dog = module:type "dog"
+      local Type = module:type "type"
       assert.has.no.errors (function ()
-        local _ = Dog {}
+        local _ = Type {}
       end)
     end)
 
@@ -66,10 +66,10 @@ describe ("resty-redis-mapper", function ()
       local module = Module {
         host  = "redis",
       }
-      local Dog = module:type "dog"
-      local dog = Dog {}
+      local Type   = module:type "type"
+      local object = Type {}
       assert.has.no.errors (function ()
-        module [dog] = nil
+        module [object] = nil
       end)
     end)
 
@@ -78,39 +78,138 @@ describe ("resty-redis-mapper", function ()
       local module = Module {
         host  = "redis",
       }
-      local Dog = module:type "dog"
-      local dog = Dog {}
-      local o1  = module [dog]
-      local o2  = module [dog]
-      assert.are.same (dog, o1)
-      assert.are.same (dog, o2)
+      local Type   = module:type "type"
+      local object = Type {}
+      local o1  = module [object]
+      local o2  = module [object]
+      assert.are.same (object, o1)
+      assert.are.same (object, o2)
     end)
 
-    it ("can be initialized and updated", function ()
+    it ("can be initialized", function ()
       local Module = require "resty-redis-mapper"
       local id
       do
         local module = Module {
           host  = "redis",
         }
-        local Dog = module:type "dog"
-        local dog = Dog {
-          sub = {
-            name = "Medor",
-          },
+        local Type = module:type "type"
+        local object = Type {
+          field = "value",
         }
-        assert.are.equal (dog.sub.name, "Medor")
-        id = module:identifier (dog)
+        assert.are.equal (object.field, "value")
+        id = module:identifier (object)
         module:commit ()
       end
       do
         local module = Module {
           host  = "redis",
         }
-        local _   = module:type "dog"
-        local dog = module [id]
-        print (dog.sub.name)
-        assert.are.equal (dog.sub.name, "Medor")
+        local _      = module:type "type"
+        local object = module [id]
+        assert.are.equal (object.field, "value")
+      end
+    end)
+
+    it ("can be updated", function ()
+      local Module = require "resty-redis-mapper"
+      local id
+      do
+        local module = Module {
+          host  = "redis",
+        }
+        local Type   = module:type "type"
+        local object = Type {}
+        object.outer = "value"
+        object.inner = {
+          x = true,
+        }
+        object.inner.y = 1
+        id = module:identifier (object)
+        module:commit ()
+      end
+      do
+        local module = Module {
+          host  = "redis",
+        }
+        local _      = module:type "type"
+        local object = module [id]
+        assert.are.equal (object.outer  , "value")
+        assert.are.equal (object.inner.x, true)
+        assert.are.equal (object.inner.y, 1)
+      end
+    end)
+
+    it ("can be updated with other objects", function ()
+      local Module = require "resty-redis-mapper"
+      local id_other, id_object
+      do
+        local module = Module {
+          host  = "redis",
+        }
+        local Type   = module:type "type"
+        local other  = Type {}
+        local object = Type {}
+        object [other] = true
+        object.outer = other
+        object.inner = {
+          x = other,
+        }
+        id_other  = module:identifier (other )
+        id_object = module:identifier (object)
+        module:commit ()
+      end
+      do
+        local module = Module {
+          host  = "redis",
+        }
+        local _      = module:type "type"
+        local other  = module [id_other ]
+        local object = module [id_object]
+        assert.are.equal (object [other], true)
+        assert.are.equal (object.outer  , other)
+        assert.are.equal (object.inner.x, other)
+      end
+    end)
+
+    it ("can be iterated", function ()
+      local Module = require "resty-redis-mapper"
+      local id_other, id_object
+      do
+        local module = Module {
+          host  = "redis",
+        }
+        local Type   = module:type "type"
+        local other  = Type {}
+        local object = Type {}
+        object [1] = true
+        object [2] = other
+        id_other  = module:identifier (other )
+        id_object = module:identifier (object)
+        module:commit ()
+      end
+      do
+        local module = Module {
+          host  = "redis",
+        }
+        local _      = module:type "type"
+        local other  = module [id_other ]
+        local object = module [id_object]
+        assert.are.equal (#object, 2)
+        do
+          local results = {}
+          for _, x in ipairs (object) do
+            results [#results+1] = x
+          end
+          assert.are.same (results, { true, other })
+        end
+        do
+          local keys = {}
+          for key in pairs (object) do
+            keys [#keys+1] = key
+          end
+          assert.are.equal (#keys, 2)
+        end
       end
     end)
 

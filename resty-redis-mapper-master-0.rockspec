@@ -16,6 +16,7 @@ description = {
 
 dependencies = {
   "lua >= 5.1",
+  "coronest",
   "hashids",
   "lua-resty-busted",
 }

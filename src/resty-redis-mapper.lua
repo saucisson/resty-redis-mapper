@@ -1,9 +1,10 @@
 -- luacheck: new globals ngx
 
-local type_of = type
-local Hashids = require "hashids"
-local Json    = require "cjson"
-local Redis   = require "resty.redis"
+local type_of  = type
+local Hashids  = require "hashids"
+local Json     = require "cjson"
+local Redis    = require "resty.redis"
+local Coromake = require "coroutine.make"
 
 local function empty ()
   local result = {}
@@ -136,39 +137,6 @@ function M.identifier (module, object)
       or nil
 end
 
--- Commit the changes:
-function M.commit (module)
-  assert (getmetatable (module) == M)
-  local m = modules [module]
-  assert (m.consistent)
-  m.redis:multi ()
-  -- Set all updated entities:
-  for data, value in pairs (m.updated) do
-    local identifier = m.metadata [data].identifier
-    if value == ngx.null then
-      -- Delete from redis:
-      assert (m.redis:del (identifier))
-    else
-      -- Set in redis:
-      assert (m.redis:set (identifier, m.encode_value ({
-        metadata = m.metadata [data],
-        contents = m.contents [data],
-      })))
-    end
-  end
-  -- Clear updated entities:
-  m.updated = {}
-  -- Commit changes to redis:
-  m.consistent = false
-  assert (m.redis:exec ())
-  -- If the assertion fails, then the whole module instance is
-  -- in a non consistent state, because data has been changed and is invalid
-  -- for Redis. The assertion should not be recovered, except at the topmost
-  -- level, where a new module instance is created, and the whole query
-  -- performed again.
-  return true
-end
-
 -- Get an object:
 function M.__index (module, key)
   assert (getmetatable (module) == M)
@@ -229,6 +197,39 @@ function M.__newindex (module, key, value)
     local object = type:__empty (m.metadata [value].identifier)
     type.__create (object, Json.decode (Json.encode (m.contents [value])))
   end
+end
+
+-- Commit the changes:
+function M.commit (module)
+  assert (getmetatable (module) == M)
+  local m = modules [module]
+  assert (m.consistent)
+  m.redis:multi ()
+  -- Set all updated entities:
+  for data, value in pairs (m.updated) do
+    local identifier = m.metadata [data].identifier
+    if value == ngx.null then
+      -- Delete from redis:
+      assert (m.redis:del (identifier))
+    else
+      -- Set in redis:
+      assert (m.redis:set (identifier, m.encode_value ({
+        metadata = m.metadata [data],
+        contents = m.contents [data],
+      })))
+    end
+  end
+  -- Clear updated entities:
+  m.updated = {}
+  -- Commit changes to redis:
+  m.consistent = false
+  assert (m.redis:exec ())
+  -- If the assertion fails, then the whole module instance is
+  -- in a non consistent state, because data has been changed and is invalid
+  -- for Redis. The assertion should not be recovered, except at the topmost
+  -- level, where a new module instance is created, and the whole query
+  -- performed again.
+  return true
 end
 
 -- The encoded object contains the following fields:
@@ -303,32 +304,27 @@ function M.type (module, name)
   type.__index = function (instance, key)
     assert (m.consistent)
     assert (m.metadata [instance] or subdata [instance])
-    -- If in an object and the key starts with "__", rawget it:
-    if  m.metadata [instance]
-    and type_of (key) == "string" and key:match "^__" then
-      return rawget (instance, key)
-    end
-    -- If in an object and the key refers to a method, return it directly:
-    if m.metadata [instance] and type [key] then
-      return type [key]
-    end
-    -- Past this line, the key should be searched within contents.
     -- If the key refers to an object, obtain its identifier:
     key = m.metadata [key]
-      and m.metadata [key].identifier
+      and "@" .. m.metadata [key].identifier
        or key
     -- Get the current location within the object:
     local current = m.contents [instance]
                  or subdata [instance].contents
     assert (type_of (current) == "table")
     current = current [key]
-    -- If there is not subdata, return nil:
+    -- If there is not subdata, search in the type:
     if current == nil then
-      return nil
+      -- If in an object and the key refers to a method, return it directly:
+      if m.metadata [instance] then
+        return type [key]
+      else
+        return nil
+      end
     end
     -- If the obtained value is a reference to an object, convert it:
-    if type_of (current) == "string" and current:match "^__" then
-      local identifier = current:match "^__(.*)$"
+    if type_of (current) == "string" and current:match "^@" then
+      local identifier = current:match "^@(.*)$"
       return module [identifier]
     end
     if type_of (current) ~= "table" then
@@ -349,30 +345,32 @@ function M.type (module, name)
     unique [current] = result
     return result
   end
+  local function convert (t)
+    t = m.metadata [t]
+      and "@" .. m.metadata [t].identifier
+       or t
+    if type_of (t) == "table" then
+      local result = {}
+      for key, value in pairs (t) do
+        key   = convert (key  )
+        value = convert (value)
+        result [key] = value
+      end
+      return result
+    elseif type_of (t) == "number"
+        or type_of (t) == "string"
+        or type_of (t) == "boolean" then
+      return t
+    else
+      assert (false)
+    end
+  end
   type.__newindex = function (instance, key, value)
     assert (m.consistent)
     assert (m.metadata [instance] or subdata [instance])
-    -- If in an object and the key starts with "__", rawget it:
-    if  m.metadata [instance]
-    and type_of (key) == "string" and key:match "^__" then
-      return rawget (instance, key)
-    end
-    -- If in an object and the key refers to a method, return it directly:
-    if m.metadata [instance] and type [key] then
-      return type [key]
-    end
-    -- Past this line, the key should be searched within contents.
-    -- If the key refers to an object, obtain its identifier:
-    key = m.metadata [key]
-      and m.metadata [key].identifier
-       or key
-    -- If the value refers to an object, obtain its identifier:
-    value = m.metadata [value]
-        and m.metadata [value].identifier
-         or value
-    -- Copy key and value to avoid shared data structures:
-    key   = Json.decode (Json.encode (key  ))
-    value = Json.decode (Json.encode (value))
+    -- Convert objects in key and value into their identifiers:
+    key   = convert (key)
+    value = convert (value)
     -- Get the current location within the object:
     local current = m.contents [instance]
                  or subdata [instance].contents
@@ -387,8 +385,43 @@ function M.type (module, name)
               or subdata [instance].root
     m.updated [root] = true
   end
+  -- The __len operator is a proxy over the raw data:
+  type.__len = function (instance)
+    assert (m.consistent)
+    assert (m.metadata [instance] or subdata [instance])
+    if m.metadata [instance] then
+      return #m.contents [instance]
+    elseif subdata [instance] then
+      return #subdata [instance]
+    end
+  end
+  -- The __ipairs operator is a proxy over the raw data:
+  type.__ipairs = function (instance)
+    assert (m.consistent)
+    assert (m.metadata [instance] or subdata [instance])
+    local coroutine = Coromake ()
+    return coroutine.wrap (function ()
+      for i in ipairs (m.contents [instance] or subdata [instance]) do
+        coroutine.yield (i, instance [i])
+      end
+    end)
+  end
+  -- The __pairs operator is a proxy over the raw data:
+  type.__pairs = function (instance)
+    assert (m.consistent)
+    assert (m.metadata [instance] or subdata [instance])
+    local coroutine = Coromake ()
+    return coroutine.wrap (function ()
+      for k in pairs (m.contents [instance] or subdata [instance]) do
+        coroutine.yield (k, instance [k])
+      end
+    end)
+  end
   table.__index    = type.__index
   table.__newindex = type.__newindex
+  table.__len      = type.__len
+  table.__ipairs   = type.__ipairs
+  table.__pairs    = type.__pairs
   return type
 end
 
