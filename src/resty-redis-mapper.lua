@@ -1,6 +1,5 @@
 -- luacheck: new globals ngx
 
-local type_of  = type
 local Hashids  = require "hashids"
 local Json     = require "cjson"
 local Redis    = require "resty.redis"
@@ -60,7 +59,7 @@ defaults.identifiers = "@identifiers"
 -- The encoding function for unique identifiers:
 local hashids = Hashids.new ("a default salt", 8)
 defaults.encode_key = function (key)
-  assert (type_of (key) == "number", key)
+  assert (type (key) == "number", key)
   return hashids:encode (key)
 end
 
@@ -78,7 +77,7 @@ end
 
 -- Create a new instance of the module:
 getmetatable (M).__call = function (_, options)
-  assert (options == nil or type_of (options) == "table")
+  assert (options == nil or type (options) == "table")
   -- Create instance, and set the __gc hack if `newproxy` exists:
   local module    = setmetatable ({}, M)
   modules [module] = {}
@@ -92,7 +91,7 @@ getmetatable (M).__call = function (_, options)
   local m = modules [module]
   -- Fill module with options or defaults:
   for key, default in pairs (defaults) do
-    assert (options [key] == nil or type_of (options [key]) == type_of (default))
+    assert (options [key] == nil or type (options [key]) == type (default))
     m [key] = options [key] or default
   end
   -- Inconsistent flag warns that the instance should not be used,
@@ -105,7 +104,7 @@ getmetatable (M).__call = function (_, options)
   -- Set of updated data:
   m.updated = {}
   -- Types:
-  m.types = setmetatable ({}, { __mode = "v" })
+  m.metas = setmetatable ({}, { __mode = "v" })
   -- Redis connection:
   m.redis = Redis:new ()
   m.redis:set_timeout (m.timeout)
@@ -166,9 +165,9 @@ function M.__index (module, key)
   end
   data = m.decode_value (data)
   -- Load the object:
-  local type   = m.types [data.metadata.type]
-  local object = type:__empty (data.metadata.identifier)
-  type.__create (object, data.contents)
+  local meta   = m.metas [data.metadata.meta]
+  local object = meta:__empty (data.metadata.identifier)
+  meta.__create (object, data.contents)
   m.objects [key] = object
   return object
 end
@@ -193,9 +192,9 @@ function M.__newindex (module, key, value)
   -- If the value is not nil, replace object:
   if value ~= nil then
     -- Clone object:
-    local type   = assert (getmetatable (value))
-    local object = type:__empty (m.metadata [value].identifier)
-    type.__create (object, Json.decode (Json.encode (m.contents [value])))
+    local meta   = assert (getmetatable (value))
+    local object = meta:__empty (m.metadata [value].identifier)
+    meta.__create (object, Json.decode (Json.encode (m.contents [value])))
   end
 end
 
@@ -232,20 +231,16 @@ function M.commit (module)
   return true
 end
 
--- The encoded object contains the following fields:
--- * __identifier: its unique identifier;
--- * __type: the name of its type;
--- * __contents: its contents.
 -- Create a type:
 function M.type (module, name)
   assert (getmetatable (module) == M)
   local m = modules [module]
   assert (m.consistent)
-  assert (type_of (name) == "string")
+  assert (type (name) == "string")
   -- Metatable for subdata:
   local table = {}
   -- Metatable for type:
-  local type  = setmetatable ({}, {
+  local meta  = setmetatable ({}, {
     __call = function (t, contents)
       assert (m.consistent)
       -- Generate a key for the new data:
@@ -261,39 +256,39 @@ function M.type (module, name)
     end,
   })
   -- Store type in module:
-  m.types [name] = type
+  m.metas [name] = meta
   -- Define metamethods:
-  type.__empty = function (_, identifier)
-    assert (type_of (identifier) == "string")
-    local instance = setmetatable ({}, type)
+  meta.__empty = function (_, identifier)
+    assert (type (identifier) == "string")
+    local instance = setmetatable ({}, meta)
     m.metadata [instance] = {
       identifier = identifier,
-      type       = tostring (type),
+      meta       = tostring (meta),
     }
     m.contents [instance  ] = {}
     m.objects  [identifier] = instance
     m.updated  [instance  ] = true
     return instance
   end
-  type.__create = function (instance, contents)
+  meta.__create = function (instance, contents)
     assert (m.consistent)
     -- Set the contents of the object:
     m.contents [instance] = contents
     m.updated  [instance] = true
   end
-  type.__delete = function (instance)
+  meta.__delete = function (instance)
     assert (m.consistent)
     -- Do nothing:
     local _ = instance
     m.updated [instance] = true
   end
-  type.__tostring = function (instance)
+  meta.__tostring = function (instance)
     assert (m.consistent)
-    local meta = m.metadata [instance]
-    local data = m.contents [instance]
+    local metadata = m.metadata [instance]
+    local data     = m.contents [instance]
     return meta.identifier
         .. " : "
-        .. meta.type
+        .. metadata.meta
         .. " = "
         .. Json.encode (data)
   end
@@ -301,7 +296,7 @@ function M.type (module, name)
   -- Unique table for subdata:
   local subdata = setmetatable ({}, { __mode = "v" })
   local unique  = setmetatable ({}, { __mode = "v" })
-  type.__index = function (instance, key)
+  meta.__index = function (instance, key)
     assert (m.consistent)
     assert (m.metadata [instance] or subdata [instance])
     -- If the key refers to an object, obtain its identifier:
@@ -311,23 +306,23 @@ function M.type (module, name)
     -- Get the current location within the object:
     local current = m.contents [instance]
                  or subdata [instance].contents
-    assert (type_of (current) == "table")
+    assert (type (current) == "table")
     current = current [key]
     -- If there is not subdata, search in the type:
     if current == nil then
       -- If in an object and the key refers to a method, return it directly:
       if m.metadata [instance] then
-        return type [key]
+        return meta [key]
       else
         return nil
       end
     end
     -- If the obtained value is a reference to an object, convert it:
-    if type_of (current) == "string" and current:match "^@" then
+    if type (current) == "string" and current:match "^@" then
       local identifier = current:match "^@(.*)$"
       return module [identifier]
     end
-    if type_of (current) ~= "table" then
+    if type (current) ~= "table" then
       return current
     end
     -- Else, search for a unique representation:
@@ -349,7 +344,7 @@ function M.type (module, name)
     t = m.metadata [t]
       and "@" .. m.metadata [t].identifier
        or t
-    if type_of (t) == "table" then
+    if type (t) == "table" then
       local result = {}
       for key, value in pairs (t) do
         key   = convert (key  )
@@ -357,15 +352,15 @@ function M.type (module, name)
         result [key] = value
       end
       return result
-    elseif type_of (t) == "number"
-        or type_of (t) == "string"
-        or type_of (t) == "boolean" then
+    elseif type (t) == "number"
+        or type (t) == "string"
+        or type (t) == "boolean" then
       return t
     else
       assert (false)
     end
   end
-  type.__newindex = function (instance, key, value)
+  meta.__newindex = function (instance, key, value)
     assert (m.consistent)
     assert (m.metadata [instance] or subdata [instance])
     -- Convert objects in key and value into their identifiers:
@@ -374,7 +369,7 @@ function M.type (module, name)
     -- Get the current location within the object:
     local current = m.contents [instance]
                  or subdata [instance].contents
-    assert (type_of (current) == "table")
+    assert (type (current) == "table")
     -- Update the value:
     -- Thanks to unique table, the change should be correctly propagated
     -- to other references.
@@ -386,7 +381,7 @@ function M.type (module, name)
     m.updated [root] = true
   end
   -- The __len operator is a proxy over the raw data:
-  type.__len = function (instance)
+  meta.__len = function (instance)
     assert (m.consistent)
     assert (m.metadata [instance] or subdata [instance])
     if m.metadata [instance] then
@@ -396,7 +391,7 @@ function M.type (module, name)
     end
   end
   -- The __ipairs operator is a proxy over the raw data:
-  type.__ipairs = function (instance)
+  meta.__ipairs = function (instance)
     assert (m.consistent)
     assert (m.metadata [instance] or subdata [instance])
     local coroutine = Coromake ()
@@ -407,7 +402,7 @@ function M.type (module, name)
     end)
   end
   -- The __pairs operator is a proxy over the raw data:
-  type.__pairs = function (instance)
+  meta.__pairs = function (instance)
     assert (m.consistent)
     assert (m.metadata [instance] or subdata [instance])
     local coroutine = Coromake ()
@@ -417,12 +412,12 @@ function M.type (module, name)
       end
     end)
   end
-  table.__index    = type.__index
-  table.__newindex = type.__newindex
-  table.__len      = type.__len
-  table.__ipairs   = type.__ipairs
-  table.__pairs    = type.__pairs
-  return type
+  table.__index    = meta.__index
+  table.__newindex = meta.__newindex
+  table.__len      = meta.__len
+  table.__ipairs   = meta.__ipairs
+  table.__pairs    = meta.__pairs
+  return meta
 end
 
 return M
