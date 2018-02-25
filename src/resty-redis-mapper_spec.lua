@@ -48,6 +48,20 @@ describe ("resty-redis-mapper", function ()
 
   end)
 
+  it ("can commit", function ()
+    assert.are.equal (redis:dbsize (), 0)
+    local Module = require "resty-redis-mapper"
+    local module = Module {
+      host  = "redis",
+    }
+    local Dog = module:type "dog"
+    local _   = Dog {}
+    assert.has.no.errors (function ()
+      module:commit ()
+    end)
+    assert.are.equal (redis:dbsize (), 2)
+  end)
+
   describe ("objects", function ()
 
     it ("can be created", function ()
@@ -213,20 +227,6 @@ describe ("resty-redis-mapper", function ()
       end
     end)
 
-  end)
-
-  it ("can commit", function ()
-    assert.are.equal (redis:dbsize (), 0)
-    local Module = require "resty-redis-mapper"
-    local module = Module {
-      host  = "redis",
-    }
-    local Dog = module:type "dog"
-    local _   = Dog {}
-    assert.has.no.errors (function ()
-      module:commit ()
-    end)
-    assert.are.equal (redis:dbsize (), 2)
   end)
 
 end)
