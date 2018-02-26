@@ -56,6 +56,10 @@ defaults.pool = 100
 -- The special key for generating unique identifiers:
 defaults.identifiers = "@identifiers"
 
+-- The prefixes for references and strings within objects:
+defaults.reference_prefix = "@/"
+defaults.string_prefix    = "*/"
+
 -- The encoding function for unique identifiers:
 local hashids = Hashids.new ("a default salt", 8)
 defaults.encode_key = function (key)
@@ -65,14 +69,66 @@ end
 
 -- The encoding and decoding functions for data:
 local json = Json.new ()
-defaults.encode_value = function (value)
-  return json.encode (value)
+defaults.encode_value = function (module, object)
+  assert (getmetatable (module) == M)
+  local m = modules [module]
+  assert (m.consistent)
+  local function convert (t)
+    if m.targets [t] then
+      return defaults.reference_prefix .. m.targets [t]
+    elseif type (t) == "table" then
+      local result = {}
+      for key, value in pairs (t) do
+        key   = convert (key)
+        value = convert (value)
+        result [key] = value
+      end
+      return result
+    elseif type (t) == "number"
+        or type (t) == "boolean" then
+      return t
+    elseif type (t) == "string" then
+      return defaults.string_prefix .. t
+    else
+      assert (false)
+    end
+  end
+  return json.encode (convert {
+    metadata = assert (m.metadata [object]),
+    contents = assert (m.contents [object]),
+  })
 end
-defaults.decode_value = function (value)
-  if value == ngx.null then
+defaults.decode_value = function (module, string)
+  assert (getmetatable (module) == M)
+  local m = modules [module]
+  assert (m.consistent)
+  if string == ngx.null then
     return nil
   end
-  return Json.decode (value)
+  local function convert (t)
+    if type (t) == "table" then
+      local result = {}
+      for key, value in pairs (t) do
+        key   = convert (key)
+        value = convert (value)
+        result [key] = value
+      end
+      return result
+    elseif type (t) == "number"
+        or type (t) == "boolean" then
+      return t
+    elseif type (t) == "string"
+       and t:match ("^" .. defaults.reference_prefix) then
+      local key = t:match ("^" .. defaults.reference_prefix .. "(.*)$")
+      return module:reference (key)
+    elseif type (t) == "string"
+       and t:match ("^" .. defaults.string_prefix) then
+      return t:match ("^" .. defaults.string_prefix .. "(.*)$")
+    else
+      assert (false)
+    end
+  end
+  return convert (Json.decode (string))
 end
 
 -- Create a new instance of the module:
@@ -94,17 +150,22 @@ getmetatable (M).__call = function (_, options)
     assert (options [key] == nil or type (options [key]) == type (default))
     m [key] = options [key] or default
   end
+  -- Metatable for references:
+  m.Reference = setmetatable ({}, empty ())
   -- Inconsistent flag warns that the instance should not be used,
   -- because it has reached an inconsistent state with its objects:
   m.consistent = true
   -- Unique table for data and subdata:
-  m.objects  = setmetatable ({}, { __mode = "v" })
-  m.metadata = setmetatable ({}, { __mode = "v" })
-  m.contents = setmetatable ({}, { __mode = "v" })
+  m.objects    = setmetatable ({}, { __mode = "v" }) -- key    -> object
+  m.metadata   = setmetatable ({}, { __mode = "k" }) -- object -> info
+  m.contents   = setmetatable ({}, { __mode = "k" }) -- object -> data
+  -- Unique table for references:
+  m.references = setmetatable ({}, { __mode = "v" }) -- key    -> ref
+  m.targets    = setmetatable ({}, { __mode = "k" }) -- ref    -> key
   -- Set of updated data:
   m.updated = {}
   -- Types:
-  m.metas = setmetatable ({}, { __mode = "v" })
+  m.metas = setmetatable ({}, { __mode = "v" }) -- key -> type
   -- Redis connection:
   m.redis = Redis:new ()
   m.redis:set_timeout (m.timeout)
@@ -136,6 +197,23 @@ function M.identifier (module, object)
       or nil
 end
 
+function M.reference (module, object)
+  assert (getmetatable (module) == M)
+  local m = modules [module]
+  assert (m.consistent)
+  if type (object) == "table" then
+    local identifier = m.metadata [object].identifier
+    return M.reference (module, identifier)
+  end
+  assert (type (object) == "string")
+  if not m.references [object] then
+    local result = setmetatable ({}, m.Reference)
+    m.references [object] = result
+    m.targets    [result] = object
+  end
+  return m.references [object]
+end
+
 -- Get an object:
 function M.__index (module, key)
   assert (getmetatable (module) == M)
@@ -163,7 +241,7 @@ function M.__index (module, key)
   if data == ngx.null then
     return nil
   end
-  data = m.decode_value (data)
+  data = m.decode_value (module, data)
   -- Load the object:
   local meta   = m.metas [data.metadata.meta]
   local object = meta:__empty (data.metadata.identifier)
@@ -212,10 +290,7 @@ function M.commit (module)
       assert (m.redis:del (identifier))
     else
       -- Set in redis:
-      assert (m.redis:set (identifier, m.encode_value ({
-        metadata = m.metadata [data],
-        contents = m.contents [data],
-      })))
+      assert (m.redis:set (identifier, m.encode_value (module, data)))
     end
   end
   -- Clear updated entities:
@@ -296,13 +371,32 @@ function M.type (module, name)
   -- Unique table for subdata:
   local subdata = setmetatable ({}, { __mode = "v" })
   local unique  = setmetatable ({}, { __mode = "v" })
+  local function convert (t)
+    if m.metadata [t] then
+      return module:reference (t)
+    elseif m.targets [t] then
+      return t
+    elseif type (t) == "table" then
+      local result = {}
+      for key, value in pairs (t) do
+        key   = convert (key)
+        value = convert (value)
+        result [key] = value
+      end
+      return result
+    elseif type (t) == "number"
+        or type (t) == "boolean"
+        or type (t) == "string" then
+      return t
+    else
+      assert (false)
+    end
+  end
   meta.__index = function (instance, key)
     assert (m.consistent)
     assert (m.metadata [instance] or subdata [instance])
-    -- If the key refers to an object, obtain its identifier:
-    key = m.metadata [key]
-      and "@" .. m.metadata [key].identifier
-       or key
+    -- If the key refers to an object, convert it into a reference:
+    key = convert (key)
     -- Get the current location within the object:
     local current = m.contents [instance]
                  or subdata [instance].contents
@@ -317,9 +411,9 @@ function M.type (module, name)
         return nil
       end
     end
-    -- If the obtained value is a reference to an object, convert it:
-    if type (current) == "string" and current:match "^@" then
-      local identifier = current:match "^@(.*)$"
+    -- If the obtained value is a reference to an object, load it:
+    if m.targets [current] then
+      local identifier = m.targets [current]
       return module [identifier]
     end
     if type (current) ~= "table" then
@@ -340,30 +434,11 @@ function M.type (module, name)
     unique [current] = result
     return result
   end
-  local function convert (t)
-    t = m.metadata [t]
-      and "@" .. m.metadata [t].identifier
-       or t
-    if type (t) == "table" then
-      local result = {}
-      for key, value in pairs (t) do
-        key   = convert (key  )
-        value = convert (value)
-        result [key] = value
-      end
-      return result
-    elseif type (t) == "number"
-        or type (t) == "string"
-        or type (t) == "boolean" then
-      return t
-    else
-      assert (false)
-    end
-  end
   meta.__newindex = function (instance, key, value)
     assert (m.consistent)
     assert (m.metadata [instance] or subdata [instance])
-    -- Convert objects in key and value into their identifiers:
+    assert (not subdata [key] and not subdata [value])
+    -- If key or value are objects, get references to them:
     key   = convert (key)
     value = convert (value)
     -- Get the current location within the object:
