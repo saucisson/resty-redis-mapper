@@ -245,4 +245,21 @@ describe ("resty-redis-mapper", function ()
 
   end)
 
+  it ("can commit", function ()
+    assert.are.equal (redis:dbsize (), 0)
+    local Module = require "resty-redis-mapper"
+    local module = Module {
+      host  = "redis",
+    }
+    local Dog   = module:type "dog"
+    local start = os.time ()
+    local i     = 0
+    repeat
+      local _ = Dog {}
+      i = i + 1
+    until os.time () - start >= 2
+    module:commit ()
+    print ("Can perform " .. tostring (i/3) .. " commits per second.")
+  end)
+
 end)
