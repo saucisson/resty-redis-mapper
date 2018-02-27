@@ -12,7 +12,7 @@ do
   current=$(date "+%s")
   if [ $((current - last)) -ge 1 ]
   then
-    luacheck     src/
+    luacheck src/
     resty_busted src/
     echo ""
   fi

@@ -1,0 +1,26 @@
+sudo: required
+language: python
+services:
+  - docker
+addons:
+  apt:
+    packages:
+    - shellcheck
+    - tree
+before_install:
+  - sudo pip install hererocks
+  - sudo hererocks -r^ --luajit=2.0 /usr
+  - sudo luarocks install luacheck
+script:
+  - shellcheck update.sh
+  - luacheck src/
+  - docker-compose up --build -d
+  - sleep 5; touch src/; sleep 5
+  - docker-compose logs > .logs
+  - docker-compose down
+  - grep "[  PASSED  ]" .logs
+notifications:
+  email:
+    - alban.linard@gmail.com
+  on_success: change
+  on_failure: change
