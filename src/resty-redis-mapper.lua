@@ -1,9 +1,10 @@
 -- luacheck: new globals ngx
 
-local Hashids  = require "hashids"
-local Json     = require "cjson"
-local Redis    = require "resty.redis"
 local Coromake = require "coroutine.make"
+local Hashids  = require "hashids"
+local MsgPack  = require "cmsgpack"
+local Redis    = require "resty.redis"
+local Serpent  = require "serpent"
 
 -- Create an empty metatable:
 local function empty ()
@@ -87,7 +88,6 @@ local function reference_of (module, object)
 end
 
 -- The encoding and decoding functions for data:
-local json = Json.new ()
 defaults.encode_value = function (module, object)
   assert (getmetatable (module) == M)
   local m = modules [module]
@@ -112,7 +112,7 @@ defaults.encode_value = function (module, object)
       assert (false)
     end
   end
-  return json.encode (convert {
+  return MsgPack.pack (convert {
     metadata = assert (m.metadata [object]),
     contents = assert (m.contents [object]),
   })
@@ -147,7 +147,7 @@ defaults.decode_value = function (module, string)
       assert (false)
     end
   end
-  return convert (Json.decode (string))
+  return convert (MsgPack.unpack (string))
 end
 
 -- Create a new instance of the module:
@@ -256,7 +256,7 @@ function M.__newindex (module, key, value)
     -- Clone object:
     local meta   = assert (getmetatable (value))
     local object = meta ({}, m.metadata [value].identifier)
-    m.contents [object] = Json.decode (Json.encode (m.contents [value]))
+    m.contents [object] = m.decode_value (m.encode_value (m.contents [value]))
     m.updated  [object] = true
   end
 end
@@ -343,7 +343,7 @@ function M.type (module, name)
         .. " : "
         .. metadata.meta
         .. " = "
-        .. Json.encode (data)
+        .. Serpent.block (data)
   end
 
   -- Unique table for subdata:

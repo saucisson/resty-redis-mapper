@@ -1,3 +1,5 @@
+-- luacheck: std rockspec
+
 package = "resty-redis-mapper"
 version = "master-0"
 
@@ -18,7 +20,9 @@ dependencies = {
   "lua >= 5.1",
   "coronest",
   "hashids",
+  "lua-cmsgpack",
   "lua-resty-busted",
+  "serpent",
 }
 
 build = {
