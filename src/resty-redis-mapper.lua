@@ -290,12 +290,15 @@ function M.commit (module)
   m.updated = {}
   -- Commit changes to redis:
   m.consistent = false
-  assert (m.redis:exec ())
+  local ok, err = m.redis:exec ()
   -- If the assertion fails, then the whole module instance is
   -- in a non consistent state, because data has been changed and is invalid
   -- for Redis. The assertion should not be recovered, except at the topmost
   -- level, where a new module instance is created, and the whole query
   -- performed again.
+  -- In all cases, cleanup:
+  M.__gc (module)
+  assert (ok, err)
   return true
 end
 
