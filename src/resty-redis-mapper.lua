@@ -188,32 +188,6 @@ function M.__gc (module)
   m.consistent = false
 end
 
-function M.identifier (module, object)
-  assert (getmetatable (module) == M)
-  local m = modules [module]
-  assert (m.consistent)
-  return m.metadata [object]
-     and m.metadata [object].identifier
-      or nil
-end
-
-function M.reference (module, object)
-  assert (getmetatable (module) == M)
-  local m = modules [module]
-  assert (m.consistent)
-  if type (object) == "table" then
-    local identifier = m.metadata [object].identifier
-    return M.reference (module, identifier)
-  end
-  assert (type (object) == "string")
-  if not m.references [object] then
-    local result = setmetatable ({}, m.Reference)
-    m.references [object] = result
-    m.targets    [result] = object
-  end
-  return m.references [object]
-end
-
 -- Get an object:
 function M.__index (module, key)
   assert (getmetatable (module) == M)
@@ -274,6 +248,34 @@ function M.__newindex (module, key, value)
     local object = meta:__empty (m.metadata [value].identifier)
     meta.__create (object, Json.decode (Json.encode (m.contents [value])))
   end
+end
+
+-- Get the identifier of an object:
+function M.identifier (module, object)
+  assert (getmetatable (module) == M)
+  local m = modules [module]
+  assert (m.consistent)
+  return m.metadata [object]
+     and m.metadata [object].identifier
+      or nil
+end
+
+-- Get a reference to an object or an identifier:
+function M.reference (module, object)
+  assert (getmetatable (module) == M)
+  local m = modules [module]
+  assert (m.consistent)
+  if type (object) == "table" then
+    local identifier = m.metadata [object].identifier
+    return M.reference (module, identifier)
+  end
+  assert (type (object) == "string")
+  if not m.references [object] then
+    local result = setmetatable ({}, m.Reference)
+    m.references [object] = result
+    m.targets    [result] = object
+  end
+  return m.references [object]
 end
 
 -- Commit the changes:
