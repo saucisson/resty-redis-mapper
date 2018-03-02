@@ -42,7 +42,7 @@ describe ("resty-redis-mapper", function ()
         host  = "redis",
       }
       assert.has.no.errors (function ()
-        local _ = module:type "type"
+        local _ = module / "type"
       end)
     end)
 
@@ -54,10 +54,10 @@ describe ("resty-redis-mapper", function ()
     local module = Module {
       host  = "redis",
     }
-    local Dog = module:type "dog"
+    local Dog = module / "dog"
     local _   = Dog {}
     assert.has.no.errors (function ()
-      module:commit ()
+      module ()
     end)
     assert.are.equal (redis:dbsize (), 2)
   end)
@@ -68,10 +68,9 @@ describe ("resty-redis-mapper", function ()
     local module = Module {
       host  = "redis",
     }
-    local Dog = module:type "dog"
-    local _   = Dog {}
+    local Dog = module / "dog"
     assert.has.no.errors (function ()
-      module:commit ()
+      module ()
     end)
     assert.has.errors (function ()
       local _ = Dog {}
@@ -85,7 +84,7 @@ describe ("resty-redis-mapper", function ()
       local module = Module {
         host  = "redis",
       }
-      local Type = module:type "type"
+      local Type = module / "type"
       assert.has.no.errors (function ()
         local _ = Type {}
       end)
@@ -96,7 +95,7 @@ describe ("resty-redis-mapper", function ()
       local module = Module {
         host  = "redis",
       }
-      local Type   = module:type "type"
+      local Type   = module / "type"
       local object = Type {}
       assert.has.no.errors (function ()
         module [object] = nil
@@ -108,7 +107,7 @@ describe ("resty-redis-mapper", function ()
       local module = Module {
         host  = "redis",
       }
-      local Type   = module:type "type"
+      local Type   = module / "type"
       local object = Type {}
       local o1  = module [object]
       local o2  = module [object]
@@ -123,19 +122,19 @@ describe ("resty-redis-mapper", function ()
         local module = Module {
           host  = "redis",
         }
-        local Type = module:type "type"
-        local object = Type {
+        local Type = module / "type"
+        local object
+        object, id = Type {
           field = "value",
         }
         assert.are.equal (object.field, "value")
-        id = module:identifier (object)
-        module:commit ()
+        module ()
       end
       do
         local module = Module {
           host  = "redis",
         }
-        local _      = module:type "type"
+        local _      = module / "type"
         local object = module [id]
         assert.are.equal (object.field, "value")
       end
@@ -148,21 +147,21 @@ describe ("resty-redis-mapper", function ()
         local module = Module {
           host  = "redis",
         }
-        local Type   = module:type "type"
-        local object = Type {}
+        local Type = module / "type"
+        local object
+        object, id = Type {}
         object.outer = "value"
         object.inner = {
           x = true,
         }
         object.inner.y = 1
-        id = module:identifier (object)
-        module:commit ()
+        module ()
       end
       do
         local module = Module {
           host  = "redis",
         }
-        local _      = module:type "type"
+        local _      = module / "type"
         local object = module [id]
         assert.are.equal (object.outer  , "value")
         assert.are.equal (object.inner.x, true)
@@ -177,23 +176,22 @@ describe ("resty-redis-mapper", function ()
         local module = Module {
           host  = "redis",
         }
-        local Type   = module:type "type"
-        local other  = Type {}
-        local object = Type {}
+        local Type = module / "type"
+        local other, object
+        object, id_object  = Type {}
+        other , id_other  = Type {}
         object [other] = true
         object.outer = other
         object.inner = {
           x = other,
         }
-        id_other  = module:identifier (other )
-        id_object = module:identifier (object)
-        module:commit ()
+        module ()
       end
       do
         local module = Module {
           host  = "redis",
         }
-        local _      = module:type "type"
+        local _      = module / "type"
         local other  = module [id_other ]
         local object = module [id_object]
         assert.are.equal (object [other], true)
@@ -209,20 +207,19 @@ describe ("resty-redis-mapper", function ()
         local module = Module {
           host  = "redis",
         }
-        local Type   = module:type "type"
-        local other  = Type {}
-        local object = Type {}
+        local Type = module / "type"
+        local other, object
+        object, id_object  = Type {}
+        other , id_other  = Type {}
         object [1] = true
         object [2] = other
-        id_other  = module:identifier (other )
-        id_object = module:identifier (object)
-        module:commit ()
+        module ()
       end
       do
         local module = Module {
           host  = "redis",
         }
-        local _      = module:type "type"
+        local _      = module / "type"
         local other  = module [id_other ]
         local object = module [id_object]
         assert.are.equal (#object, 2)
@@ -251,15 +248,106 @@ describe ("resty-redis-mapper", function ()
     local module = Module {
       host  = "redis",
     }
-    local Dog   = module:type "dog"
+    local Dog   = module / "dog"
     local start = os.time ()
     local i     = 0
     repeat
       local _ = Dog {}
       i = i + 1
     until os.time () - start >= 2
-    module:commit ()
+    module ()
     print ("Can perform " .. tostring (i/3) .. " commits per second.")
+  end)
+
+  it ("can run the example of the documentation", function ()
+    -- Import the module:
+    local Rrm = require "resty-redis-mapper"
+
+    -- Instantiate the module with a specific configuration:
+    local rrm = Rrm {
+      host = "redis",
+      port = 6379,
+    }
+
+    -- There are some other configuration fields.
+    -- Create a data type named "type":
+    local Type = rrm / "type"
+
+    -- Feel free to add any method to the type,
+    -- but do **not** change `__index` and `__newindex`,
+    -- as they are implemented by `resty-redis-mapper`.
+    function Type:do_something ()
+      self.value = 42
+    end
+    -- A default `__tostring` is defined, but it can be overwritten safely:
+    function Type:__tostring ()
+      return tostring (self.value)
+    end
+
+    -- Create an object of type `Type`,
+    -- and get its unique identifier as second result:
+    local object, id_object  = Type {}
+
+    -- Update the object as a standard Lua table,
+    -- even creating references to objects within:
+    object.myself = object
+    object.t      = {
+      a = 1,
+      b = true,
+    }
+    object:do_something ()
+    assert (tostring (object) == "42", tostring (object))
+    -- Warning: all data put within a table is copied,
+    -- except references to objects.
+    -- This differs from the semantics of tables in the Lua language.
+
+    -- Commit all changes done since the module instantiation:
+    assert (rrm ())
+
+    -- The module instance becomes unusable after commit,
+    -- in order to prevent inconsistencies:
+    assert (not pcall (function ()
+      local _ = Type {}
+    end))
+
+    -- If you need to perform other changes,
+    -- create a new instance of the module.
+    rrm = Rrm { host = "redis", port = 6379 }
+
+    -- The type must be registered again,
+    -- because it is defined per instance of the module:
+    Type = rrm / "type"
+    -- In practice, users can create a function that registers all types.
+
+    -- And the object previously created can be loaded using its identifier:
+    object = rrm [id_object]
+    assert (object.myself == object)
+    assert (object.t.a == 1)
+    assert (object.t.b == true)
+
+    -- `resty-redis-mapper` uses transactions.
+    -- If an object has been modified by something else
+    -- between its loading and commit time, the commit fails:
+    object.c = "c"
+    do
+      local o_rrm = Rrm { host = "redis", port = 6379 }
+      local _ = o_rrm / "type"
+      local o_object = o_rrm [id_object]
+      o_object.c = nil
+      assert (o_rrm ())
+    end
+    -- This following commit fails,
+    -- because the object has been modified in the block above.
+    -- The local copy is thus in a inconsistent state with the reference.
+    assert (rrm ())
+
+    -- It is possible to delete an object using the usual Lua notation:
+    rrm    = Rrm { host = "redis", port = 6379 }
+    Type   = rrm / "type"
+    object = rrm [id_object]
+    rrm [object] = nil
+    -- rrm [id_object] = nil works as well
+    assert (rrm ())
   end)
 
 end)

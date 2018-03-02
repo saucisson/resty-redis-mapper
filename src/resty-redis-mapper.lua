@@ -5,6 +5,7 @@ local Json     = require "cjson"
 local Redis    = require "resty.redis"
 local Coromake = require "coroutine.make"
 
+-- Create an empty metatable:
 local function empty ()
   local result = {}
   for _, key in ipairs {
@@ -67,6 +68,24 @@ defaults.encode_key = function (key)
   return hashids:encode (key)
 end
 
+-- Get a reference to an object or an identifier:
+local function reference_of (module, object)
+  assert (getmetatable (module) == M)
+  local m = modules [module]
+  assert (m.consistent)
+  if type (object) == "table" then
+    local identifier = m.metadata [object].identifier
+    return reference_of (module, identifier)
+  end
+  assert (type (object) == "string")
+  if not m.references [object] then
+    local result = setmetatable ({}, m.Reference)
+    m.references [object] = result
+    m.targets    [result] = object
+  end
+  return m.references [object]
+end
+
 -- The encoding and decoding functions for data:
 local json = Json.new ()
 defaults.encode_value = function (module, object)
@@ -120,7 +139,7 @@ defaults.decode_value = function (module, string)
     elseif type (t) == "string"
        and t:match ("^" .. defaults.reference_prefix) then
       local key = t:match ("^" .. defaults.reference_prefix .. "(.*)$")
-      return module:reference (key)
+      return reference_of (module, key)
     elseif type (t) == "string"
        and t:match ("^" .. defaults.string_prefix) then
       return t:match ("^" .. defaults.string_prefix .. "(.*)$")
@@ -193,11 +212,6 @@ function M.__index (module, key)
   assert (getmetatable (module) == M)
   local m = modules [module]
   assert (m.consistent)
-  -- If the key refers to a method, return it:
-  if M [key] then
-    return M [key]
-  end
-  -- Else, the key refers to an object that can exist or be missing.
   -- If the key is an object, get its identifier:
   key = m.metadata [key]
     and m.metadata [key].identifier
@@ -218,9 +232,7 @@ function M.__index (module, key)
   data = m.decode_value (module, data)
   -- Load the object:
   local meta   = m.metas [data.metadata.meta]
-  local object = meta:__empty (data.metadata.identifier)
-  meta.__create (object, data.contents)
-  m.objects [key] = object
+  local object = meta (data.contents, data.metadata.identifier)
   return object
 end
 
@@ -234,9 +246,7 @@ function M.__newindex (module, key, value)
     and m.metadata [key].identifier
      or key
   -- In all cases, delete the previous object:
-  -- Call the destructor of data:
   local previous = module [key]
-  getmetatable (previous).__delete (previous)
   -- Delete from unique table:
   -- `ngx.null` marks it as to delete from redis
   m.objects [key     ] = ngx.null
@@ -245,37 +255,18 @@ function M.__newindex (module, key, value)
   if value ~= nil then
     -- Clone object:
     local meta   = assert (getmetatable (value))
-    local object = meta:__empty (m.metadata [value].identifier)
-    meta.__create (object, Json.decode (Json.encode (m.contents [value])))
+    local object = meta ({}, m.metadata [value].identifier)
+    m.contents [object] = Json.decode (Json.encode (m.contents [value]))
+    m.updated  [object] = true
   end
 end
 
--- Get the identifier of an object:
-function M.identifier (module, object)
-  assert (getmetatable (module) == M)
-  local m = modules [module]
-  assert (m.consistent)
-  return m.metadata [object]
-     and m.metadata [object].identifier
-      or nil
+function M.__call (module)
+  return M.commit (module)
 end
 
--- Get a reference to an object or an identifier:
-function M.reference (module, object)
-  assert (getmetatable (module) == M)
-  local m = modules [module]
-  assert (m.consistent)
-  if type (object) == "table" then
-    local identifier = m.metadata [object].identifier
-    return M.reference (module, identifier)
-  end
-  assert (type (object) == "string")
-  if not m.references [object] then
-    local result = setmetatable ({}, m.Reference)
-    m.references [object] = result
-    m.targets    [result] = object
-  end
-  return m.references [object]
+function M.__div (module, type_name)
+  return M.type (module, type_name)
 end
 
 -- Commit the changes:
@@ -318,15 +309,21 @@ function M.type (module, name)
   local table = {}
   -- Metatable for type:
   local meta  = setmetatable ({}, {
-    __call = function (t, contents)
+    __call = function (t, contents, identifier)
       assert (m.consistent)
-      -- Generate a key for the new data:
-      local key = m.encode_key (m.redis:incr (m.identifiers))
-      -- Create object, but do not insert it into redis,
-      -- as the commit will do it:
-      local object = t:__empty (key)
-      t.__create (object, contents)
-      return object
+      -- Generate a key for the new data if needed:
+      identifier = identifier
+                or m.encode_key (m.redis:incr (m.identifiers))
+      -- Create object and fill its contents:
+      local instance = setmetatable ({}, t)
+      m.metadata [instance] = {
+        identifier = identifier,
+        meta       = tostring (t),
+      }
+      m.contents [instance  ] = contents
+      m.objects  [identifier] = instance
+      m.updated  [instance  ] = true
+      return instance, identifier
     end,
     __tostring = function (_)
       return name
@@ -334,31 +331,7 @@ function M.type (module, name)
   })
   -- Store type in module:
   m.metas [name] = meta
-  -- Define metamethods:
-  meta.__empty = function (_, identifier)
-    assert (type (identifier) == "string")
-    local instance = setmetatable ({}, meta)
-    m.metadata [instance] = {
-      identifier = identifier,
-      meta       = tostring (meta),
-    }
-    m.contents [instance  ] = {}
-    m.objects  [identifier] = instance
-    m.updated  [instance  ] = true
-    return instance
-  end
-  meta.__create = function (instance, contents)
-    assert (m.consistent)
-    -- Set the contents of the object:
-    m.contents [instance] = contents
-    m.updated  [instance] = true
-  end
-  meta.__delete = function (instance)
-    assert (m.consistent)
-    -- Do nothing:
-    local _ = instance
-    m.updated [instance] = true
-  end
+  -- Define the `__tostring` metamethod:
   meta.__tostring = function (instance)
     assert (m.consistent)
     local metadata = m.metadata [instance]
@@ -374,8 +347,10 @@ function M.type (module, name)
   local subdata = setmetatable ({}, { __mode = "v" })
   local unique  = setmetatable ({}, { __mode = "v" })
   local function convert (t)
-    if m.metadata [t] then
-      return module:reference (t)
+    if t == nil then
+      return nil
+    elseif m.metadata [t] then
+      return reference_of (module, t)
     elseif m.targets [t] then
       return t
     elseif type (t) == "table" then
@@ -391,7 +366,7 @@ function M.type (module, name)
         or type (t) == "string" then
       return t
     else
-      assert (false)
+      assert (false, type (t))
     end
   end
   meta.__index = function (instance, key)
