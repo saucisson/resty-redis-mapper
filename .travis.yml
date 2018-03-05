@@ -1,24 +1,23 @@
 sudo: required
 language: python
 services:
-  - docker
+  - redis-server
+sudo: false
 addons:
   apt:
     packages:
     - shellcheck
-    - tree
+    - git
 before_install:
-  - sudo pip install hererocks
-  - sudo hererocks -r^ --luajit=2.0 /usr
-  - sudo luarocks install luacheck
+  - pip install hererocks
+  - hererocks -r^ --luajit=2.0 ${HOME}/usr
+  - export PATH=${HOME}/usr/bin:${PATH}
+  - luarocks install luacheck
+  - luarocks install https://raw.githubusercontent.com/saucisson/lua-resty-busted/master/lua-resty-busted-master-0.rockspec
 script:
   - shellcheck update.sh
   - luacheck src/
-  - docker-compose up --build -d
-  - sleep 5; touch src/; sleep 5
-  - docker-compose logs > .logs
-  - docker-compose down
-  - grep "[  PASSED  ]" .logs
+  - REDIS="localhost" resty_busted src/
 notifications:
   email:
     - alban.linard@gmail.com

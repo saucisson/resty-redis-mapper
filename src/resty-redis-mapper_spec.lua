@@ -4,6 +4,8 @@
 package.path  = "/usr/local/openresty/lualib/?.lua;" .. package.path
 package.cpath = "/usr/local/openresty/lualib/?.so;"  .. package.cpath
 
+local redis_host = os.getenv "REDIS" or "redis"
+
 describe ("resty-redis-mapper", function ()
 
   local Redis, redis
@@ -11,7 +13,7 @@ describe ("resty-redis-mapper", function ()
   before_each (function ()
     Redis = require "resty.redis"
     redis = Redis:new ()
-    assert (redis:connect ("redis", 6379))
+    assert (redis:connect (redis_host, 6379))
     redis:flushall ()
   end)
 
@@ -26,7 +28,7 @@ describe ("resty-redis-mapper", function ()
     local start  = os.time ()
     repeat
       local module = Module {
-        host  = "redis",
+        host  = redis_host,
       }
       local Type  = module / "type"
       local _     = Type {}
@@ -42,7 +44,7 @@ describe ("resty-redis-mapper", function ()
 
     -- Instantiate the module with a specific configuration:
     local rrm = Rrm {
-      host = "redis",
+      host = redis_host,
       port = 6379,
     }
     -- There are some other configuration fields.
@@ -93,7 +95,7 @@ describe ("resty-redis-mapper", function ()
 
     -- If you need to perform other changes,
     -- create a new instance of the module.
-    rrm = Rrm { host = "redis", port = 6379 }
+    rrm = Rrm { host = redis_host, port = 6379 }
 
     -- The type must be registered again,
     -- because it is defined per instance of the module:
@@ -113,7 +115,7 @@ describe ("resty-redis-mapper", function ()
     -- between its loading and commit time, the commit fails:
     object.c = "c"
     do
-      local o_rrm = Rrm { host = "redis", port = 6379 }
+      local o_rrm = Rrm { host = redis_host, port = 6379 }
       local _ = o_rrm / "type"
       local o_object = o_rrm [id_object]
       o_object.c = nil
@@ -128,12 +130,12 @@ describe ("resty-redis-mapper", function ()
 
     -- `resty-redis-mapper` allows to concurrently read objects.
     -- There can also be one write to an object, that is read.
-    rrm      = Rrm { host = "redis", port = 6379 }
+    rrm      = Rrm { host = redis_host, port = 6379 }
     Type     = rrm / "type"
     object   = rrm [id_object]
     object.c = "c"
     do
-      local o_rrm = Rrm { host = "redis", port = 6379 }
+      local o_rrm = Rrm { host = redis_host, port = 6379 }
       local _ = o_rrm / "type"
       local _ = o_rrm [id_object]
       o_rrm ()
@@ -144,7 +146,7 @@ describe ("resty-redis-mapper", function ()
     rrm ()
 
     -- It is possible to delete an object using the usual Lua notation:
-    rrm    = Rrm { host = "redis", port = 6379 }
+    rrm    = Rrm { host = redis_host, port = 6379 }
     Type   = rrm / "type"
     object = rrm [id_object]
     rrm [object] = nil
